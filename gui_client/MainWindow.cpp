@@ -203,6 +203,9 @@ MainWindow::MainWindow(const std::string& base_dir_path_, const std::string& app
 		// State was not restored.  This will be the case for new Substrata installs.
 		// Hide some dock widgets to provide a slightly simpler user experience.
 		// Hide everything but chat and help-info dock widgets.
+
+		// NOTE: to test this code-path, can delete the windowState Registry key in "Computer\HKEY_CURRENT_USER\SOFTWARE\Glare Technologies\Cyberspace\mainwindow" with regedit.
+		this->ui->chatDockWidget->hide();
 		this->ui->editorDockWidget->hide();
 		this->ui->materialBrowserDockWidget->hide();
 		this->ui->environmentDockWidget->hide();
@@ -441,12 +444,12 @@ void MainWindow::afterGLInitInitialise()
 		const std::string font_path       = PlatformUtils::getFontsDirPath() + "/Segoeui.ttf"; // SegoeUI is shipped with Windows 7 onwards: https://learn.microsoft.com/en-us/typography/fonts/windows_7_font_list
 		const std::string emoji_font_path = PlatformUtils::getFontsDirPath() + "/Seguiemj.ttf";
 #elif defined(__APPLE__)
-		const std::string font_path = "/System/Library/Fonts/SFNS.ttf";
+		const std::string font_path       = "/System/Library/Fonts/SFNS.ttf";
 		const std::string emoji_font_path = "/System/Library/Fonts/SFNS.ttf";
 #else
 		// Linux:
-		const std::string font_path = base_dir_path + "/data/resources/TruenoLight-E2pg.otf";
-		const std::string emoji_font_path = base_dir + "/data/resources/TruenoLight-E2pg.otf"; 
+		const std::string font_path       = base_dir_path + "/data/resources/TruenoLight-E2pg.otf";
+		const std::string emoji_font_path = base_dir_path + "/data/resources/TruenoLight-E2pg.otf"; 
 #endif
 
 	TextRendererRef text_renderer = new TextRenderer();
@@ -457,8 +460,7 @@ void MainWindow::afterGLInitInitialise()
 
 	const auto device_pixel_ratio = ui->glWidget->devicePixelRatio(); // For retina screens this is 2, meaning the gl viewport width is in physical pixels, which have twice the density of qt pixel coordinates.
 
-	const bool show_minimap = MainOptionsDialog::getShowMinimap(this->settings);
-	gui_client.afterGLInitInitialise((double)device_pixel_ratio, show_minimap, ui->glWidget->opengl_engine, fonts, emoji_fonts);
+	gui_client.afterGLInitInitialise((double)device_pixel_ratio, ui->glWidget->opengl_engine, fonts, emoji_fonts);
 
 	MainWindowGLUICallbacks* glui_callbacks = new MainWindowGLUICallbacks();
 	glui_callbacks->main_window = this;
@@ -1582,6 +1584,58 @@ void MainWindow::on_actionAddHypercard_triggered()
 }
 
 
+void MainWindow::on_actionAdd_Text_triggered()
+{
+	const float quad_w = 0.4f;
+	const Vec3d ob_pos = gui_client.cam_controller.getFirstPersonPosition() + gui_client.cam_controller.getForwardsVec() * 2.0f -
+		gui_client.cam_controller.getUpVec() * quad_w * 0.5f -
+		gui_client.cam_controller.getRightVec() * quad_w * 0.5f;
+
+	// Check permissions
+	bool ob_pos_in_parcel;
+	const bool have_creation_perms = gui_client.haveParcelObjectCreatePermissions(ob_pos, ob_pos_in_parcel);
+	if(!have_creation_perms)
+	{
+		if(ob_pos_in_parcel)
+			showErrorNotification("You do not have write permissions, and are not an admin for this parcel.");
+		else
+			showErrorNotification("You can only create hypercards in a parcel that you have write permissions for.");
+		return;
+	}
+
+	Quatf rot_upright = Quatf::fromAxisAndAngle(Vec3f(1,0,0), Maths::pi_2<float>());
+	Quatf face_cam_rot = Quatf::fromAxisAndAngle(Vec3f(0,0,1), Maths::roundToMultipleFloating((float)gui_client.cam_controller.getAngles().x - Maths::pi_2<float>(), Maths::pi_4<float>())); // Round to nearest 45 degree angle.
+	Quatf total_rot = face_cam_rot * rot_upright;
+	Vec4f total_rot_axis;
+	float total_rot_angle;
+	total_rot.toAxisAndAngle(total_rot_axis, total_rot_angle);
+
+	WorldObjectRef new_world_object = new WorldObject();
+	new_world_object->uid = UID(0); // Will be set by server
+	new_world_object->object_type = WorldObject::ObjectType_Text;
+	new_world_object->pos = ob_pos;
+	new_world_object->axis = toVec3f(total_rot_axis);
+	new_world_object->angle = total_rot_angle;
+	new_world_object->scale = Vec3f(0.4f);
+	new_world_object->content = "Some Text";
+	new_world_object->setAABBOS(js::AABBox(Vec4f(0,0,0,1), Vec4f(1,0,1,1)));
+
+	new_world_object->materials.resize(1);
+	new_world_object->materials[0] = new WorldMaterial();
+	new_world_object->materials[0]->flags = WorldMaterial::COLOUR_TEX_HAS_ALPHA_FLAG | WorldMaterial::DOUBLE_SIDED_FLAG;
+
+	// Send CreateObject message to server
+	{
+		MessageUtils::initPacket(scratch_packet, Protocol::CreateObject);
+		new_world_object->writeToNetworkStream(scratch_packet);
+
+		enqueueMessageToSend(*gui_client.client_thread, scratch_packet);
+	}
+
+	showInfoNotification("Added Text.");
+}
+
+
 void MainWindow::on_actionAdd_Spotlight_triggered()
 {
 	const float quad_w = 0.4f;
@@ -2153,7 +2207,7 @@ void MainWindow::glWidgetPasteShortcutTriggered()
 		{
 			TextInputEvent text_input_event;
 			text_input_event.text = QtUtils::toStdString(mime_data->text());
-			gui_client.gl_ui->handleTextInputEvent(text_input_event);
+			gui_client.handleTextInputEvent(text_input_event);
 		}
 		return;
 	}
@@ -2698,16 +2752,6 @@ void MainWindow::on_actionOptions_triggered()
 		//ui->glWidget->opengl_engine->setMSAAEnabled(settings->value(MainOptionsDialog::MSAAKey(), /*default val=*/true).toBool());
 
 		startMainTimer(); // Restart main timer, as the timer interval depends on max FPS, whiich may have changed.
-
-		// Create or destroy minimap if minimap option has changed.
-		if(d.getShowMinimap(this->settings) && !gui_client.minimap.isCreated())
-		{
-			gui_client.minimap.create(opengl_engine, &gui_client, gui_client.gl_ui);
-		}
-		else if(!d.getShowMinimap(this->settings) && gui_client.minimap.isCreated())
-		{
-			gui_client.minimap.destroy();
-		}
 	}
 
 	gui_client.mic_read_thread_manager.enqueueMessage(new InputVolumeScaleChangedMessage(
@@ -3415,7 +3459,7 @@ void MainWindow::glWidgetKeyPressed(QKeyEvent* e)
 	{
 		TextInputEvent text_input_event;
 		text_input_event.text = QtUtils::toStdString(e->text());
-		gui_client.gl_ui->handleTextInputEvent(text_input_event);
+		gui_client.handleTextInputEvent(text_input_event);
 		if(text_input_event.accepted)
 			return;
 	}

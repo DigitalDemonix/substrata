@@ -70,6 +70,7 @@ Copyright Glare Technologies Limited 2024 -
 #include "../utils/IndigoXMLDoc.h"
 #include "../utils/RuntimeCheck.h"
 #include "../utils/MemAlloc.h"
+#include "../utils/UTF8Utils.h"
 #include "../networking/Networking.h"
 #include "../networking/URL.h"
 #include "../graphics/ImageMap.h"
@@ -279,7 +280,8 @@ void GUIClient::initialise(const std::string& cache_dir, SettingsStore* settings
 	// In this case, we want to check if each resource is actually present on disk in the current resources dir.
 	const std::string last_resources_dir = settings->getStringValue("last_resources_dir", "");
 	const bool resources_dir_changed = last_resources_dir != resources_dir;
-	settings->setStringValue("last_resources_dir", resources_dir);
+	if(resources_dir_changed)
+		settings->setStringValue("last_resources_dir", resources_dir);
 
 	const std::string resources_db_path = appdata_path + "/resources_db";
 	try
@@ -361,7 +363,7 @@ static void assignedLoadedOpenGLTexturesToMats(Avatar* av, OpenGLEngine& opengl_
 static const float arc_handle_half_angle = 1.5f;
 
 
-void GUIClient::afterGLInitInitialise(double device_pixel_ratio, bool show_minimap, Reference<OpenGLEngine> opengl_engine_, 
+void GUIClient::afterGLInitInitialise(double device_pixel_ratio, Reference<OpenGLEngine> opengl_engine_, 
 	const TextRendererFontFaceSizeSetRef& fonts, const TextRendererFontFaceSizeSetRef& emoji_fonts)
 {
 	opengl_engine = opengl_engine_;
@@ -379,9 +381,7 @@ void GUIClient::afterGLInitInitialise(double device_pixel_ratio, bool show_minim
 
 	chat_ui.create(opengl_engine, /*gui_client_=*/this, gl_ui);
 
-
-	if(show_minimap)
-		minimap.create(opengl_engine, /*gui_client_=*/this, gl_ui);
+	minimap.create(opengl_engine, /*gui_client_=*/this, gl_ui);
 
 	// For non-Emscripten, init this stuff now.  For Emscripten, since this data is loaded from the webserver, wait until we are connecting and hence know the server hostname.
 #if !EMSCRIPTEN
@@ -466,18 +466,15 @@ void GUIClient::afterGLInitInitialise(double device_pixel_ratio, bool show_minim
 	// Make hypercard physics mesh
 	{
 		Indigo::MeshRef mesh = new Indigo::Mesh();
-
-		unsigned int v_start = 0;
 		{
 			mesh->addVertex(Indigo::Vec3f(0,0,0));
 			mesh->addVertex(Indigo::Vec3f(0,0,1));
 			mesh->addVertex(Indigo::Vec3f(0,1,1));
 			mesh->addVertex(Indigo::Vec3f(0,1,0));
-			const unsigned int vertex_indices[]   = {v_start + 0, v_start + 1, v_start + 2};
+			const unsigned int vertex_indices[]   = {0, 1, 2};
 			mesh->addTriangle(vertex_indices, vertex_indices, 0);
-			const unsigned int vertex_indices_2[] = {v_start + 0, v_start + 2, v_start + 3};
+			const unsigned int vertex_indices_2[] = {0, 2, 3};
 			mesh->addTriangle(vertex_indices_2, vertex_indices_2, 0);
-			v_start += 4;
 		}
 		mesh->endOfModel();
 
@@ -485,6 +482,23 @@ void GUIClient::afterGLInitInitialise(double device_pixel_ratio, bool show_minim
 	}
 
 	hypercard_quad_opengl_mesh = MeshPrimitiveBuilding::makeQuadMesh(*opengl_engine->vert_buf_allocator, Vec4f(1, 0, 0, 0), Vec4f(0, 0, 1, 0), /*vert_res=*/2);
+
+	{
+		Indigo::MeshRef mesh = new Indigo::Mesh();
+		{
+			mesh->addVertex(Indigo::Vec3f(0,0,0));
+			mesh->addVertex(Indigo::Vec3f(1,0,0));
+			mesh->addVertex(Indigo::Vec3f(1,1,0));
+			mesh->addVertex(Indigo::Vec3f(0,1,0));
+			const unsigned int vertex_indices[]   = {0, 1, 2};
+			mesh->addTriangle(vertex_indices, vertex_indices, 0);
+			const unsigned int vertex_indices_2[] = {0, 2, 3};
+			mesh->addTriangle(vertex_indices_2, vertex_indices_2, 0);
+		}
+		mesh->endOfModel();
+
+		text_quad_shape = PhysicsWorld::createJoltShapeForIndigoMesh(*mesh, /*build_dynamic_physics_ob=*/false);
+	}
 
 	// Make spotlight meshes
 	{
@@ -742,6 +756,11 @@ void GUIClient::shutdown()
 
 	
 	if(biome_manager) delete biome_manager;
+
+	// Remove the notifications from the UI
+	for(auto it = notifications.begin(); it != notifications.end(); ++it)
+		gl_ui->removeWidget(it->text_view); 
+	notifications.clear();
 
 	misc_info_ui.destroy();
 
@@ -1559,6 +1578,70 @@ static Colour4f computeSpotlightColour(const WorldObject& ob, float cone_cos_ang
 }
 
 
+void GUIClient::createGLAndPhysicsObsForText(const Matrix4f& ob_to_world_matrix, WorldObject* ob, bool use_materialise_effect, PhysicsObjectRef& physics_ob_out, GLObjectRef& opengl_ob_out)
+{
+	Rect2f rect_os;
+	OpenGLTextureRef atlas_texture;
+
+	const std::string use_text = ob->content.empty() ? " " : UTF8Utils::sanitiseUTF8String(ob->content);
+
+	const int font_size_px = 42;
+
+	std::vector<GLUIText::CharPositionInfo> char_positions_font_coords;
+	Reference<OpenGLMeshRenderData> meshdata = GLUIText::makeMeshDataForText(opengl_engine, gl_ui->font_char_text_cache.ptr(), gl_ui->getFonts(), gl_ui->getEmojiFonts(), use_text, 
+		/*font size px=*/font_size_px, /*vert_pos_scale=*/(1.f / font_size_px), /*render SDF=*/true, rect_os, atlas_texture, char_positions_font_coords);
+
+	PhysicsObjectRef physics_ob = new PhysicsObject(/*collidable=*/false);
+	physics_ob->shape = PhysicsWorld::createScaledShapeForShape(this->text_quad_shape, Vec3f(rect_os.getWidths().x, rect_os.getWidths().y, 1.f));
+	physics_ob->userdata = ob;
+	physics_ob->userdata_type = 0;
+	physics_ob->ob_uid = ob->uid;
+	physics_ob->pos = ob->pos.toVec4fPoint();
+	physics_ob->rot = Quatf::fromAxisAndAngle(normalise(ob->axis), ob->angle);
+	physics_ob->scale = useScaleForWorldOb(/*physics_quad_scale*/ob->scale);
+
+
+	GLObjectRef opengl_ob = opengl_engine->allocateObject();
+	opengl_ob->mesh_data = meshdata;
+	opengl_ob->materials.resize(1);
+	OpenGLMaterial& gl_mat_0 = opengl_ob->materials[0];
+
+	if(ob->materials.size() >= 1)
+		ModelLoading::setGLMaterialFromWorldMaterial(*ob->materials[0], /*ob_lod_level*/0, ob->lightmap_url, *this->resource_manager, gl_mat_0);
+
+
+	gl_mat_0.alpha_blend = true; // Make use alpha blending
+	gl_mat_0.sdf_text = true;
+
+	if(ob->materials.size() >= 1)
+	{
+		gl_mat_0.alpha = ob->materials[0]->opacity.val;
+		gl_mat_0.transparent = BitUtils::isBitSet(ob->materials[0]->flags, WorldMaterial::HOLOGRAM_FLAG);
+
+		if(ob->materials[0]->emission_lum_flux_or_lum > 0)
+			gl_mat_0.emission_texture = atlas_texture;
+
+		if(BitUtils::isBitSet(ob->materials[0]->flags, WorldMaterial::HOLOGRAM_FLAG))
+			gl_mat_0.alpha_blend = false;
+
+	}
+
+	gl_mat_0.tex_matrix = Matrix2f::identity();
+	//gl_mat_0.albedo_texture = atlas_texture;
+	gl_mat_0.transmission_texture = atlas_texture;
+
+
+
+	opengl_ob->ob_to_world_matrix = ob_to_world_matrix;
+
+	gl_mat_0.materialise_effect = use_materialise_effect;
+	gl_mat_0.materialise_start_time = ob->materialise_effect_start_time;
+
+	physics_ob_out = physics_ob;
+	opengl_ob_out = opengl_ob;
+}
+
+
 // Load or reload an object's 3d model.
 // 
 // Check if the model file is downloaded.
@@ -1706,6 +1789,27 @@ void GUIClient::loadModelForObject(WorldObject* ob)
 				opengl_engine->addObject(ob->opengl_engine_ob);
 
 				physics_world->addObject(ob->physics_object);
+			}
+		}
+		else if(ob->object_type == WorldObject::ObjectType_Text)
+		{
+			if(ob->opengl_engine_ob.isNull())
+			{
+				assert(ob->physics_object.isNull());
+
+				PhysicsObjectRef physics_ob;
+				GLObjectRef opengl_ob;
+				createGLAndPhysicsObsForText(ob_to_world_matrix, ob, use_materialise_effect, physics_ob, opengl_ob);
+
+				ob->opengl_engine_ob = opengl_ob;
+				ob->physics_object = physics_ob;
+				ob->loaded_content = ob->content;
+
+				opengl_engine->addObject(ob->opengl_engine_ob);
+
+				physics_world->addObject(ob->physics_object);
+
+				assignedLoadedOpenGLTexturesToMats(ob, *opengl_engine, *resource_manager);
 			}
 		}
 		else if(ob->object_type == WorldObject::ObjectType_Spotlight)
@@ -3774,7 +3878,6 @@ void GUIClient::updateDiagnosticAABBForObject(WorldObject* ob)
 			if(ob->diagnostic_text_view.nonNull())
 			{
 				this->gl_ui->removeWidget(ob->diagnostic_text_view);
-				ob->diagnostic_text_view->destroy();
 				ob->diagnostic_text_view = NULL;
 			}
 		}
@@ -4201,7 +4304,6 @@ void GUIClient::timerEvent(const MouseCursorState& mouse_cursor_state)
 	
 	gesture_ui.think();
 	hud_ui.think();
-	chat_ui.think();
 	minimap.think();
 
 	updateObjectsWithDiagnosticVis();
@@ -6592,7 +6694,7 @@ void GUIClient::handleMessages(double global_time, double cur_time)
 		else if(dynamic_cast<const ClientDisconnectedFromServerMessage*>(msg))
 		{
 			const ClientDisconnectedFromServerMessage* m = static_cast<const ClientDisconnectedFromServerMessage*>(msg);
-			if(!m->error_message.empty())
+			if(!m->error_message.empty() && !m->closed_gracefully)
 			{
 				showErrorNotification(m->error_message);
 			}
@@ -8958,6 +9060,29 @@ void GUIClient::objectEdited()
 							selected_ob->loaded_content = selected_ob->content;
 						}
 					}
+					else if(this->selected_ob->object_type == WorldObject::ObjectType_Text)
+					{
+						// Re-create opengl and physics objects
+
+						removeAndDeleteGLAndPhysicsObjectsForOb(*selected_ob);
+
+						PhysicsObjectRef new_physics_ob;
+						GLObjectRef new_opengl_ob;
+						createGLAndPhysicsObsForText(new_ob_to_world_matrix, selected_ob.ptr(), /*use_materialise_effect*/false, new_physics_ob, new_opengl_ob);
+
+						selected_ob->opengl_engine_ob = new_opengl_ob;
+						selected_ob->physics_object = new_physics_ob;
+						selected_ob->loaded_content = selected_ob->content;
+						selected_ob->setAABBOS(new_opengl_ob->mesh_data->aabb_os);
+
+						opengl_engine->addObject(selected_ob->opengl_engine_ob);
+
+						physics_world->addObject(selected_ob->physics_object);
+
+						opengl_ob = new_opengl_ob;
+
+						opengl_engine->selectObject(new_opengl_ob);
+					}
 					else if(this->selected_ob->object_type == WorldObject::ObjectType_Spotlight)
 					{
 						GLLightRef light = this->selected_ob->opengl_light;
@@ -10642,6 +10767,9 @@ void GUIClient::mouseMoved(MouseEvent& mouse_event)
 			mouse_event.accepted = true;
 			return;
 		}
+
+		chat_ui.handleMouseMoved(mouse_event);
+		minimap.handleMouseMoved(mouse_event);
 	}
 
 	if(!ui_interface->isCursorHidden())
@@ -11231,10 +11359,10 @@ GLObjectRef GUIClient::makeNameTagGLObject(const std::string& nametag)
 	const int padding_x = (int)(use_font_height * 1.0f);
 	const int padding_y = (int)(use_font_height * 0.6f);
 
-	ImageMapUInt8Ref map = new ImageMapUInt8(size_info.getSize().x + padding_x * 2, use_font_height + padding_y * 2, 3);
+	ImageMapUInt8Ref map = new ImageMapUInt8(size_info.glyphSize().x + padding_x * 2, use_font_height + padding_y * 2, 3);
 	map->set(240);
 
-	font->drawText(*map, nametag, padding_x, padding_y + use_font_height, Colour3f(0.05f));
+	font->drawText(*map, nametag, padding_x, padding_y + use_font_height, Colour3f(0.05f), /*render SDF=*/false);
 
 
 	GLObjectRef gl_ob = opengl_engine->allocateObject();
@@ -11511,13 +11639,13 @@ void GUIClient::stopGesture()
 
 	// Send AvatarStopGesture message
 	// If we are not logged in, we can't perform a gesture, so don't send a AvatarStopGesture message or we will just get error messages back from the server.
-	if(this->logged_in_user_id.valid())
-	{
+	//if(this->logged_in_user_id.valid())
+	//{
 		MessageUtils::initPacket(scratch_packet, Protocol::AvatarStopGesture);
 		writeToStream(this->client_avatar_uid, scratch_packet);
 
 		enqueueMessageToSend(*this->client_thread, scratch_packet);
-	}
+	//}
 }
 
 
@@ -11546,12 +11674,19 @@ void GUIClient::setMicForVoiceChatEnabled(bool enabled)
 	{
 		if(mic_read_thread_manager.getNumThreads() == 0)
 		{
-			Reference<glare::MicReadThread> mic_read_thread = new glare::MicReadThread(&this->msg_queue, this->udp_socket, this->client_avatar_uid, server_hostname, server_UDP_port,
-				settings->getStringValue("setting/input_device_name", "Default"), //MainOptionsDialog::getInputDeviceName(settings),
-				settings->getIntValue("setting/input_scale_factor_name", /*default val=*/100) * 0.01f, // NOTE: stored in percent in settings //MainOptionsDialog::getInputScaleFactor(settings), // input_vol_scale_factor
-				&mic_read_status
-			);
-			mic_read_thread_manager.addThread(mic_read_thread);
+			try
+			{
+				Reference<glare::MicReadThread> mic_read_thread = new glare::MicReadThread(&this->msg_queue, this->udp_socket, this->client_avatar_uid, server_hostname, server_UDP_port,
+					settings->getStringValue("setting/input_device_name", "Default"), //MainOptionsDialog::getInputDeviceName(settings),
+					settings->getIntValue("setting/input_scale_factor_name", /*default val=*/100) * 0.01f, // NOTE: stored in percent in settings //MainOptionsDialog::getInputScaleFactor(settings), // input_vol_scale_factor
+					&mic_read_status
+				);
+				mic_read_thread_manager.addThread(mic_read_thread);
+			}
+			catch(glare::Exception& e)
+			{
+				showInfoNotification("Failed to enable microphone input: " + e.what());
+			}
 		}
 	}
 	else
@@ -12172,6 +12307,23 @@ void GUIClient::keyReleased(KeyEvent& e)
 }
 
 
+void GUIClient::handleTextInputEvent(TextInputEvent& text_input_event)
+{
+	if(gl_ui.nonNull())
+	{
+		gl_ui->handleTextInputEvent(text_input_event);
+		if(text_input_event.accepted)
+			return;
+	}
+
+	if(selected_ob.nonNull() && selected_ob->web_view_data.nonNull()) // If we have a web-view object selected, send keyboard input to it:
+	{
+		ui_interface->setKeyboardCameraMoveEnabled(false); // We don't want WASD keys etc. to move the camera while we enter text into the webview, so disable camera moving from the keyboard.
+		selected_ob->web_view_data->handleTextInputEvent(text_input_event);
+	}
+}
+
+
 void GUIClient::focusOut()
 {
 	SHIFT_down = false;
@@ -12214,7 +12366,8 @@ void GUIClient::updateNotifications(double cur_time)
 	{
 		it->text_view->setPos(*gl_ui, 
 			Vec2f(
-				-gl_ui->getUIWidthForDevIndepPixelWidth(150), 
+				myMax(-1.f, -it->text_view->getRect().getWidths().x / 2.f),
+				//-gl_ui->getUIWidthForDevIndepPixelWidth(150), 
 				gl_ui->getViewportMinMaxY() - gl_ui->getUIWidthForDevIndepPixelWidth(40 + i * 40.f)
 			)
 		);
@@ -12222,8 +12375,9 @@ void GUIClient::updateNotifications(double cur_time)
 		// Make the notification fade out when it is nearly time to remove it.
 		const float frac = (float)((cur_time - it->creation_time) / NOTIFICATION_DISPLAY_TIME);
 		const float alpha = myClamp(1.f - Maths::smoothStep(0.8f, 1.2f, frac) * 2, 0.f, 1.f);
-		it->text_view->glui_text->overlay_ob->material.alpha = alpha;
-		it->text_view->background_overlay_ob->material.alpha = alpha;
+
+		it->text_view->setAlpha(alpha);
+		it->text_view->setBackgroundAlpha(alpha);
 	}
 }
 
@@ -12235,7 +12389,7 @@ void GUIClient::showErrorNotification(const std::string& message)
 	//args.background_alpha = 0.8f;
 	args.text_colour = Colour3f(0.f);
 	args.padding_px = 8;
-	GLUITextViewRef text_view = new GLUITextView(*gl_ui, opengl_engine, message, Vec2f(0,0), args);
+	GLUITextViewRef text_view = new GLUITextView(*gl_ui, opengl_engine, UTF8Utils::sanitiseUTF8String(message), Vec2f(0,0), args);
 
 	gl_ui->addWidget(text_view);
 
@@ -12261,7 +12415,7 @@ void GUIClient::showInfoNotification(const std::string& message)
 	//args.background_alpha = 0.8f;
 	args.text_colour = Colour3f(0.f);
 	args.padding_px = 8;
-	GLUITextViewRef text_view = new GLUITextView(*gl_ui, opengl_engine, message, Vec2f(0,0), args);
+	GLUITextViewRef text_view = new GLUITextView(*gl_ui, opengl_engine, UTF8Utils::sanitiseUTF8String(message), Vec2f(0,0), args);
 
 	gl_ui->addWidget(text_view);
 

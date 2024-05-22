@@ -7,6 +7,7 @@ Copyright Glare Technologies Limited 2021 -
 
 
 #include "GUIClient.h"
+#include <utils/UTF8Utils.h>
 
 
 ObInfoUI::ObInfoUI()
@@ -39,7 +40,6 @@ void ObInfoUI::destroy()
 	if(info_text_view.nonNull())
 	{
 		gl_ui->removeWidget(info_text_view);
-		info_text_view->destroy();
 		info_text_view = NULL;
 	}
 
@@ -73,7 +73,7 @@ void ObInfoUI::showMessage(const std::string& message, const Vec2f& gl_coords)
 {
 	const Vec2f coords = gl_ui->UICoordsForOpenGLCoords(gl_coords);
 
-	info_text_view->setText(*gl_ui, message);
+	info_text_view->setText(*gl_ui, UTF8Utils::sanitiseUTF8String(message));
 
 	info_text_view->setPos(*gl_ui, /*botleft=*/coords + Vec2f(-gl_ui->getUIWidthForDevIndepPixelWidth(100), -gl_ui->getUIWidthForDevIndepPixelWidth(50)));
 
@@ -83,6 +83,7 @@ void ObInfoUI::showMessage(const std::string& message, const Vec2f& gl_coords)
 
 void ObInfoUI::hideMessage()
 {
+	info_text_view->setPos(*gl_ui, Vec2f(-100.f, -100.f));
 	info_text_view->setVisible(false);
 }
 

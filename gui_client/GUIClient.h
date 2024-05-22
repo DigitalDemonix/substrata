@@ -110,7 +110,7 @@ public:
 	static void staticShutdown();
 
 	void initialise(const std::string& cache_dir, SettingsStore* settings_store, UIInterface* ui_interface, glare::TaskManager* high_priority_task_manager_);
-	void afterGLInitInitialise(double device_pixel_ratio, bool show_minimap, Reference<OpenGLEngine> opengl_engine, 
+	void afterGLInitInitialise(double device_pixel_ratio, Reference<OpenGLEngine> opengl_engine, 
 		const TextRendererFontFaceSizeSetRef& fonts, const TextRendererFontFaceSizeSetRef& emoji_fonts);
 
 	void shutdown();
@@ -271,6 +271,7 @@ public:
 
 	void keyPressed(KeyEvent& e);
 	void keyReleased(KeyEvent& e);
+	void handleTextInputEvent(TextInputEvent& text_input_event);
 	void focusOut();
 
 	void disconnectFromServerAndClearAllObjects(); // Remove any WorldObjectRefs held by MainWindow.
@@ -298,6 +299,8 @@ public:
 
 	void enableMaterialisationEffectOnOb(WorldObject& ob);
 	void enableMaterialisationEffectOnAvatar(Avatar& ob);
+
+	void createGLAndPhysicsObsForText(const Matrix4f& ob_to_world_matrix, WorldObject* ob, bool use_materialise_effect, PhysicsObjectRef& physics_ob_out, GLObjectRef& opengl_ob_out);
 
 public:
 	//	PhysicsWorldEventListener:
@@ -392,6 +395,8 @@ public:
 
 	Reference<OpenGLMeshRenderData> hypercard_quad_opengl_mesh; // Also used for name tags.
 	PhysicsShape hypercard_quad_shape;
+
+	PhysicsShape text_quad_shape;
 
 	Reference<OpenGLMeshRenderData> image_cube_opengl_mesh; // For images, web-views etc.
 	PhysicsShape image_cube_shape;
@@ -527,12 +532,12 @@ public:
 	UID last_restored_ob_uid_in_edit;
 
 	GLUIRef gl_ui;
-	GestureUI gesture_ui;
+	GestureUI gesture_ui; // Draws gesture buttons, also selfie and enable mic button
 	ObInfoUI ob_info_ui; // For object info and hyperlinks etc.
 	MiscInfoUI misc_info_ui; // For showing messages from the server etc.
-	HeadUpDisplayUI hud_ui;
-	ChatUI chat_ui;
-	MiniMap minimap;
+	HeadUpDisplayUI hud_ui; // Draws stuff like markers for other avatars
+	ChatUI chat_ui; // Draws chat user-interface, showing chat from other users plus the line edit for chatting.
+	MiniMap minimap; // Draws minimap
 
 	bool running_destructor;
 

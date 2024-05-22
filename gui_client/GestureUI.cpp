@@ -81,8 +81,9 @@ void GestureUI::create(Reference<OpenGLEngine>& opengl_engine_, GUIClient* gui_c
 	{
 		const std::string gesture_name = gestures[i];
 
-		GLUIButtonRef button = new GLUIButton();
-		button->create(*gl_ui, opengl_engine,  gui_client->resources_dir_path + "/buttons/" + gesture_name + ".png", Vec2f(0.1f + i * 0.15f, -min_max_y + 0.06f), Vec2f(0.1f, 0.1f), /*tooltip=*/gesture_name);
+		GLUIButton::CreateArgs args;
+		args.tooltip = gesture_name;
+		GLUIButtonRef button = new GLUIButton(*gl_ui, opengl_engine,  gui_client->resources_dir_path + "/buttons/" + gesture_name + ".png", Vec2f(0.1f + i * 0.15f, -min_max_y + 0.06f), Vec2f(0.1f, 0.1f), args);
 		button->toggleable = true;
 		button->client_data = gesture_name;
 		button->handler = this;
@@ -92,31 +93,44 @@ void GestureUI::create(Reference<OpenGLEngine>& opengl_engine_, GUIClient* gui_c
 	}
 
 	// Create left and right tab buttons
-	left_tab_button = new GLUIButton();
-	left_tab_button->create(*gl_ui, opengl_engine, gui_client->resources_dir_path + "/buttons/left_tab.png", Vec2f(0), Vec2f(0.1f, 0.1f), /*tooltip=*/"View gestures");
-	left_tab_button->handler = this;
-	gl_ui->addWidget(left_tab_button);
+	{
+		GLUIButton::CreateArgs args;
+		args.tooltip = "View gestures";
+		expand_button = new GLUIButton(*gl_ui, opengl_engine, gui_client->resources_dir_path + "/buttons/Waving 1.png", Vec2f(0), Vec2f(0.1f, 0.1f), args);
+		expand_button->handler = this;
+		gl_ui->addWidget(expand_button);
+	}
 	
-	right_tab_button = new GLUIButton();
-	right_tab_button->create(*gl_ui, opengl_engine, gui_client->resources_dir_path + "/buttons/right_tab.png", Vec2f(0), Vec2f(0.1f, 0.1f), /*tooltip=*/"Hide gestures");
-	right_tab_button->handler = this;
-	gl_ui->addWidget(right_tab_button);
+	{
+		GLUIButton::CreateArgs args;
+		args.tooltip = "Hide gestures";
+		collapse_button = new GLUIButton(*gl_ui, opengl_engine, gui_client->resources_dir_path + "/buttons/right_tab.png", Vec2f(0), Vec2f(0.1f, 0.1f), args);
+		collapse_button->handler = this;
+		gl_ui->addWidget(collapse_button);
+	}
 	
-	selfie_button = new GLUIButton();
-	selfie_button->create(*gl_ui, opengl_engine, gui_client->resources_dir_path + "/buttons/Selfie.png", Vec2f(0), Vec2f(0.1f, 0.1f), /*tooltip=*/"Selfie view");
-	selfie_button->toggleable = true;
-	selfie_button->handler = this;
-	gl_ui->addWidget(selfie_button);
+	{
+		GLUIButton::CreateArgs args;
+		args.tooltip = "Selfie view";
+		selfie_button = new GLUIButton(*gl_ui, opengl_engine, gui_client->resources_dir_path + "/buttons/Selfie.png", Vec2f(0), Vec2f(0.1f, 0.1f),args);
+		selfie_button->toggleable = true;
+		selfie_button->handler = this;
+		gl_ui->addWidget(selfie_button);
+	}
 	
-	microphone_button = new GLUIButton();
-	microphone_button->create(*gl_ui, opengl_engine, gui_client->resources_dir_path + "/buttons/microphone.png", Vec2f(0), Vec2f(0.1f, 0.1f), /*tooltip=*/"Enable microphone for voice chat");
-	microphone_button->toggleable = true;
-	microphone_button->handler = this;
-	gl_ui->addWidget(microphone_button);
+	{	
+		GLUIButton::CreateArgs args;
+		args.tooltip = "Enable microphone for voice chat";
+		microphone_button = new GLUIButton(*gl_ui, opengl_engine, gui_client->resources_dir_path + "/buttons/microphone.png", Vec2f(0), Vec2f(0.1f, 0.1f), args);
+		microphone_button->toggleable = true;
+		microphone_button->handler = this;
+		gl_ui->addWidget(microphone_button);
+	}
 
-	mic_level_image = new GLUIImage();
-	mic_level_image->create(*gl_ui, opengl_engine, ""/*gui_client->base_dir_path + "/resources/buttons/mic_level.png"*/, Vec2f(0), Vec2f(0.1f, 0.1f), /*tooltip=*/"Microphone input indicator");
-	gl_ui->addWidget(mic_level_image);
+	{	
+		mic_level_image = new GLUIImage(*gl_ui, opengl_engine, ""/*gui_client->base_dir_path + "/resources/buttons/mic_level.png"*/, Vec2f(0), Vec2f(0.1f, 0.1f), "Microphone input indicator");
+		gl_ui->addWidget(mic_level_image);
+	}
 
 	updateWidgetPositions();
 }
@@ -124,43 +138,35 @@ void GestureUI::create(Reference<OpenGLEngine>& opengl_engine_, GUIClient* gui_c
 
 void GestureUI::destroy()
 {
-	if(left_tab_button.nonNull())
+	if(expand_button.nonNull())
 	{
-		gl_ui->removeWidget(left_tab_button);
-		left_tab_button->destroy();
-		left_tab_button = NULL;
+		gl_ui->removeWidget(expand_button);
+		expand_button = NULL;
 	}
-	if(right_tab_button.nonNull())
+	if(collapse_button.nonNull())
 	{
-		gl_ui->removeWidget(right_tab_button);
-		right_tab_button->destroy();
-		right_tab_button = NULL;
+		gl_ui->removeWidget(collapse_button);
+		collapse_button = NULL;
 	}
 	if(selfie_button.nonNull())
 	{
 		gl_ui->removeWidget(selfie_button);
-		selfie_button->destroy();
 		selfie_button = NULL;
 	}
 	if(microphone_button.nonNull())
 	{
 		gl_ui->removeWidget(microphone_button);
-		microphone_button->destroy();
 		microphone_button = NULL;
 	}
 	if(mic_level_image.nonNull())
 	{
 		gl_ui->removeWidget(mic_level_image);
-		mic_level_image->destroy();
 		mic_level_image = NULL;
 	}
 
 
 	for(size_t i=0; i<gesture_buttons.size(); ++i)
-	{
 		gl_ui->removeWidget(gesture_buttons[i]);
-		gesture_buttons[i]->destroy();
-	}
 	gesture_buttons.resize(0);
 
 	gl_ui = NULL;
@@ -231,16 +237,19 @@ void GestureUI::updateWidgetPositions()
 			gesture_buttons[i]->setPosAndDims(Vec2f(x, -min_max_y + y + SPACING), Vec2f(BUTTON_W, BUTTON_H));
 		}
 
-		if(right_tab_button.nonNull())
+		if(collapse_button.nonNull())
 		{
-			const float TAB_BUTTON_W = gl_ui->getUIWidthForDevIndepPixelWidth(35);
+			const float TAB_BUTTON_W = gl_ui->getUIWidthForDevIndepPixelWidth(40/*35*/);
 
-			right_tab_button->setPosAndDims(Vec2f(GESTURES_LEFT_X - TAB_BUTTON_W - SPACING, -min_max_y + SPACING), Vec2f(TAB_BUTTON_W, BUTTON_H * 2 + SPACING));
+			static const float collapse_button_w_px = 20;
+			static const float collapse_button_h_px = 50;
+			const float collapse_button_w = gl_ui->getUIWidthForDevIndepPixelWidth(collapse_button_w_px);
+			const float collapse_button_h = gl_ui->getUIWidthForDevIndepPixelWidth(collapse_button_h_px);
 
-			if(!gestures_visible)
-				left_tab_button->setPosAndDims(Vec2f(1 - TAB_BUTTON_W - SPACING, -min_max_y + SPACING), Vec2f(TAB_BUTTON_W, BUTTON_H * 2 + SPACING));
-			else
-				left_tab_button->setPosAndDims(Vec2f(1000, -min_max_y + SPACING), Vec2f(TAB_BUTTON_W, BUTTON_H * 2 + SPACING)); // hide
+			collapse_button->setPosAndDims(Vec2f(GESTURES_LEFT_X - collapse_button_w - SPACING, -min_max_y + BUTTON_H*2 + SPACING*2 - collapse_button_h), Vec2f(collapse_button_w, collapse_button_h));
+
+			expand_button->setPosAndDims(Vec2f(1 - TAB_BUTTON_W - SPACING, -min_max_y + SPACING), Vec2f(TAB_BUTTON_W, TAB_BUTTON_W/*BUTTON_H * 2 + SPACING*/));
+			expand_button->setVisible(!gestures_visible);
 
 			const float selfie_button_x = /*-1 + SPACING*/-0.05f;
 			selfie_button->setPosAndDims(Vec2f(selfie_button_x, -min_max_y + SPACING), Vec2f(BUTTON_W, BUTTON_H));
@@ -270,8 +279,8 @@ void GestureUI::setVisible(bool visible)
 		for(size_t i=0; i<gesture_buttons.size(); ++i)
 			gesture_buttons[i]->setVisible(visible);
 
-		right_tab_button->setVisible(visible);
-		left_tab_button->setVisible(visible);
+		collapse_button->setVisible(visible);
+		expand_button->setVisible(visible);
 		selfie_button->setVisible(visible);
 		microphone_button->setVisible(visible);
 		mic_level_image->setVisible(visible);
@@ -318,14 +327,14 @@ void GestureUI::eventOccurred(GLUICallbackEvent& event)
 			}
 		}
 
-		if(button == left_tab_button.ptr())
+		if(button == expand_button.ptr())
 		{
 			event.accepted = true;
 			gestures_visible = true;
 			updateWidgetPositions();
 			gui_client->getSettingsStore()->setBoolValue("GestureUI/gestures_visible", gestures_visible);
 		}
-		else if(button == right_tab_button.ptr())
+		else if(button == collapse_button.ptr())
 		{
 			event.accepted = true;
 			gestures_visible = false;
@@ -418,6 +427,6 @@ void GestureUI::setCurrentMicLevel(float linear_level, float display_level)
 		const Colour3f green = toLinearSRGB(Colour3f(0, 54.5f/100, 8.6f/100));
 		const Colour3f red   = toLinearSRGB(Colour3f(78.7f / 100, 0, 0));
 
-		mic_level_image->overlay_ob->material.albedo_linear_rgb = Maths::lerp(green, red, Maths::smoothStep(0.9f, 0.95f, linear_level));
+		mic_level_image->setColour(Maths::lerp(green, red, Maths::smoothStep(0.9f, 0.95f, linear_level)));
 	}
 }
